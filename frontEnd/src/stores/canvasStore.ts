@@ -26,17 +26,26 @@ export const mergeElements = (
 export const useCanvasStore = defineStore("canvas", {
   state: () => ({
     elements: [] as ExcalidrawElement[],
-    appState: {} as Partial<AppState>,
+    appState: { collaborators: new Map() } as Partial<AppState>,
     files: {} as BinaryFiles,
     serverElements: [] as ExcalidrawElement[],
     serverFiles: {} as BinaryFiles,
+    serverAppState: { collaborators: new Map() } as Partial<AppState>,
   }),
   actions: {
+    normalizeAppState(appState: Partial<AppState>) {
+      const collaborators =
+        appState.collaborators instanceof Map ? appState.collaborators : new Map();
+      return {
+        ...appState,
+        collaborators,
+      } as Partial<AppState>;
+    },
     setElements(elements: readonly ExcalidrawElement[]) {
       this.elements = [...elements];
     },
     setAppState(appState: Partial<AppState>) {
-      this.appState = { ...appState };
+      this.appState = this.normalizeAppState(appState);
     },
     setFiles(files: BinaryFiles) {
       this.files = { ...files };
@@ -46,6 +55,9 @@ export const useCanvasStore = defineStore("canvas", {
     },
     setServerFiles(files: BinaryFiles) {
       this.serverFiles = { ...files };
+    },
+    setServerAppState(appState: Partial<AppState>) {
+      this.serverAppState = this.normalizeAppState(appState);
     },
   },
 });

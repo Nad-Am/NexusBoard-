@@ -41,6 +41,7 @@ const emit = defineEmits<{
   ready: [api: ExcalidrawImperativeAPI];
   change: [elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles];
   snapshot: [blob: Blob];
+  pointer: [payload: unknown];
 }>();
 
 const permissions = computed(() => props.permissions ?? { canEdit: true });
@@ -56,7 +57,7 @@ let stopDomListener: (() => void) | null = null;
 let resourceHandler: ((resource: ExtraResource) => void) | null = null;
 let rafId: number | null = null;
 
-const handlePointerUpdate = () => {
+const handlePointerUpdate = (payload: unknown) => {
   if (rafId !== null) return;
   rafId = requestAnimationFrame(() => {
     rafId = null;
@@ -67,6 +68,7 @@ const handlePointerUpdate = () => {
       excalidrawContainer.value,
     );
   });
+  emit("pointer", payload);
 };
 
 const handleChange = (elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
@@ -270,6 +272,18 @@ watch(
 );
 
 watch(
+  () => canvasStore.serverAppState,
+  (appState) => {
+    if (!excalidrawAPI.value) return;
+    excalidrawAPI.value.updateScene({
+      appState,
+      captureUpdate: "NEVER",
+    });
+  },
+  { deep: true },
+);
+
+watch(
   () => permissions.value.canEdit,
   (canEdit) => {
     overlayManager.value?.setReadOnly(!canEdit);
@@ -315,6 +329,8 @@ onUnmounted(() => {
   left: 0;
   right: 0;
   bottom: 0;
+  width: 100vw;
+  max-width: 100vw;
   overflow: hidden;
 }
 
@@ -322,6 +338,8 @@ onUnmounted(() => {
 .excalidraw-overlay-root {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .excalidraw-overlay-root {

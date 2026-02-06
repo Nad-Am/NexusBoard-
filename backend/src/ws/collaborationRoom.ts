@@ -1,6 +1,6 @@
 import { Server as HttpServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
-import { v4 as uuid } from "uuid";
+import { createId, createShortId } from "../utils/id.js";
 
 type Message = {
   type: "join" | "leave" | "update" | "cursor" | "sync";
@@ -30,10 +30,10 @@ export function setupWebSocket(server: HttpServer) {
 
   wss.on("connection", (ws) => {
     const client: Client = {
-      id: uuid(),
+      id: createId(),
       ws,
       canvasId: null,
-      userId: `user-${uuid().slice(0, 8)}`,
+      userId: `user-${createShortId(8)}`,
       color: getRandomColor(),
     };
     clients.set(ws, client);
