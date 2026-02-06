@@ -1,0 +1,117 @@
+﻿@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap");
+
+:root {
+  color-scheme: light;
+  --bg: transparent;
+  --bg-elevated: rgba(19, 21, 26, 0.9);
+  --surface: rgba(255, 255, 255, 0.06);
+  --text: #f8fafc;
+  --muted: rgba(248, 250, 252, 0.7);
+  --accent: #ffb648;
+  --accent-strong: #ff7a59;
+  --shadow: 0 18px 40px rgba(6, 8, 12, 0.55);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  background: radial-gradient(circle at top, rgba(255, 182, 72, 0.2), transparent 60%),
+    radial-gradient(circle at 20% 30%, rgba(255, 122, 89, 0.18), transparent 55%),
+    var(--bg);
+  color: var(--text);
+  font-family: "Space Grotesk", system-ui, sans-serif;
+}
+
+.app-root {
+  height: 100%;
+}
+
+.app-toolbar {
+  position: fixed;
+  top: 24px;
+  left: 24px;
+  right: 24px;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  border-radius: 20px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(14px);
+}
+
+.title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.title-block h1 {
+  margin: 0;
+  font-size: clamp(20px, 3vw, 32px);
+  letter-spacing: 0.5px;
+  font-family: "Instrument Serif", "Space Grotesk", serif;
+}
+
+.title-block .eyebrow {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.app-toolbar button,
+.app-toolbar .file-button {
+  border: 1px solid transparent;
+  background: var(--surface);
+  color: var(--text);
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.app-toolbar button:hover,
+.app-toolbar .file-button:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.app-toolbar button.primary {
+  background: linear-gradient(130deg, var(--accent), var(--accent-strong));
+  color: #1b1b1b;
+  font-weight: 600;
+}
+
+.app-toolbar .file-button input {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .app-toolbar {
+    inset: 12px 12px auto 12px;
+  }
+
+  .actions {
+    width: 100%;
+  }
+}
