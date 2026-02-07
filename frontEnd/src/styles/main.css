@@ -34,13 +34,6 @@ body,
   width: 100%;
 }
 
-.excalidraw,
-.excalidraw .layer-ui__wrapper,
-.excalidraw__canvas-wrapper,
-.excalidraw__canvas {
-  width: 100% !important;
-  height: 100% !important;
-}
 
 .app-toolbar {
   position: fixed;

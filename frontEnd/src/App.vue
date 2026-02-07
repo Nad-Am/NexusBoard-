@@ -135,9 +135,7 @@ const applyRemoteUpdate = (payload: unknown) => {
 };
 
 const setCollaborators = () => {
-  const base = canvasStore.serverAppState ?? {} as Partial<AppState>;
   canvasStore.setServerAppState({
-    ...base,
     collaborators: new Map(collaborators.value),
   });
 };

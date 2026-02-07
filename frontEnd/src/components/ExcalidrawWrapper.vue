@@ -81,7 +81,12 @@ const handleChange = (elements: readonly ExcalidrawElement[], appState: AppState
   canvasStore.setFiles(validFiles);
 
   if (excalidrawContainer.value && overlayManager.value) {
+    // Sync overlay DOM with elements (handle deletions)
+    overlayManager.value.syncWithElements(elements);
+    // Update overlay positions
     overlayManager.value.updatePositions(elements, appState, excalidrawContainer.value);
+    // Update selection highlighting
+    overlayManager.value.updateSelectionState(appState.selectedElementIds);
   }
 
   if (isFirstLoad.value) isFirstLoad.value = false;
@@ -246,11 +251,28 @@ watch(
   () => canvasStore.serverElements,
   (newElements) => {
     if (!excalidrawAPI.value) return;
+
+    // Recreate any missing overlay DOM nodes from synced elements
+    if (overlayManager.value) {
+      newElements.forEach((element) => {
+        overlayManager.value!.recreateOverlayFromElement(element);
+      });
+    }
+
     if (isFirstLoad.value) {
       excalidrawAPI.value.updateScene(
         { elements: newElements, captureUpdate: "NEVER" },
       );
       isFirstLoad.value = false;
+
+      // Update overlay positions after first load
+      if (overlayManager.value && excalidrawContainer.value) {
+        overlayManager.value.updatePositions(
+          newElements,
+          excalidrawAPI.value.getAppState(),
+          excalidrawContainer.value,
+        );
+      }
       return;
     }
 
@@ -258,6 +280,15 @@ watch(
     excalidrawAPI.value.updateScene(
       { elements: merged, captureUpdate: "NEVER" },
     );
+
+    // Update overlay positions after merge
+    if (overlayManager.value && excalidrawContainer.value) {
+      overlayManager.value.updatePositions(
+        merged,
+        excalidrawAPI.value.getAppState(),
+        excalidrawContainer.value,
+      );
+    }
   },
   { deep: true },
 );
@@ -369,6 +400,11 @@ onUnmounted(() => {
 
 .readonly .excalidraw-container {
   pointer-events: none;
+}
+
+.excalidraw-overlay-root .overlay-selected {
+  border: 2px solid #6366f1 !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3), 0 4px 12px rgba(99, 102, 241, 0.25);
 }
 
 </style>

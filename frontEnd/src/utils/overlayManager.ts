@@ -22,20 +22,20 @@ const createPlaceholderElement = (resource: ExtraResource): ExcalidrawElement =>
     width,
     height,
     angle: 0,
-    strokeColor: "transparent",
-    backgroundColor: "transparent",
+    strokeColor: "#6366f1",
+    backgroundColor: "rgba(99, 102, 241, 0.05)",
     fillStyle: "solid",
-    strokeWidth: 1,
-    strokeStyle: "solid",
+    strokeWidth: 2,
+    strokeStyle: "dashed",
     roughness: 0,
-    opacity: 0,
+    opacity: 100,
     groupIds: [],
     seed: Math.floor(Math.random() * 2 ** 31),
     version: 1,
     versionNonce: Math.floor(Math.random() * 2 ** 31),
     isDeleted: false,
     boundElements: null,
-    locked: true,
+    locked: false,
     link: null,
     updated: Date.now(),
     roundness: null,
@@ -44,6 +44,8 @@ const createPlaceholderElement = (resource: ExtraResource): ExcalidrawElement =>
     customData: {
       overlayId: resource.id,
       overlayType: resource.type,
+      overlayContent: resource.content,
+      overlayUrl: resource.url,
     },
   } as any as ExcalidrawElement;
 };
@@ -70,6 +72,8 @@ const createOverlayNode = (resource: ExtraResource) => {
   }
 
   el.classList.add("overlay-item", `overlay-${resource.type}`);
+  // Hide initially to prevent flickering at (0,0) before first position update
+  el.style.visibility = "hidden";
   return el;
 };
 
@@ -92,7 +96,7 @@ export default class OverlayManager {
       el.style.left = "0";
       el.style.top = "0";
       el.style.transformOrigin = "top left";
-      el.style.pointerEvents = "auto";
+      el.style.pointerEvents = "none";
 
       this.root.appendChild(el);
       this.items.set(resource.id, { id: resource.id, type: resource.type, el });
@@ -100,6 +104,33 @@ export default class OverlayManager {
     });
 
     return { elements };
+  }
+
+  recreateOverlayFromElement(element: ExcalidrawElement) {
+    const customData = (element as any).customData;
+    if (!customData?.overlayId || !customData?.overlayType) return;
+    if (this.items.has(customData.overlayId)) return;
+
+    const resource: ExtraResource = {
+      id: customData.overlayId,
+      type: customData.overlayType,
+      content: customData.overlayContent,
+      url: customData.overlayUrl,
+      x: element.x,
+      y: element.y,
+      width: element.width,
+      height: element.height,
+    };
+
+    const el = createOverlayNode(resource);
+    el.style.position = "absolute";
+    el.style.left = "0";
+    el.style.top = "0";
+    el.style.transformOrigin = "top left";
+    el.style.pointerEvents = "none";
+
+    this.root.appendChild(el);
+    this.items.set(resource.id, { id: resource.id, type: resource.type, el });
   }
 
   updatePositions(
@@ -110,9 +141,19 @@ export default class OverlayManager {
     const zoom = appState.zoom?.value ?? 1;
     const scrollX = appState.scrollX ?? 0;
     const scrollY = appState.scrollY ?? 0;
-    const rect = container.getBoundingClientRect();
-    const offsetX = rect.width / 2;
-    const offsetY = rect.height / 2;
+    
+    // Find Excalidraw's actual canvas element and calculate offset relative to our container
+    const excalidrawCanvas = container.querySelector('canvas.excalidraw__canvas') as HTMLCanvasElement | null;
+    const containerRect = container.getBoundingClientRect();
+    
+    let canvasOffsetX = 0;
+    let canvasOffsetY = 0;
+    
+    if (excalidrawCanvas) {
+      const canvasRect = excalidrawCanvas.getBoundingClientRect();
+      canvasOffsetX = canvasRect.left - containerRect.left;
+      canvasOffsetY = canvasRect.top - containerRect.top;
+    }
 
     elements.forEach((element) => {
       const overlayId = (element as any).customData?.overlayId as string | undefined;
@@ -121,14 +162,64 @@ export default class OverlayManager {
       const item = this.items.get(overlayId);
       if (!item) return;
 
-      const x = (element.x + scrollX) * zoom + offsetX;
-      const y = (element.y + scrollY) * zoom + offsetY;
+      // Excalidraw coordinate conversion:
+      // viewportX = (sceneX + scrollX) * zoom + canvasOffset
+      const viewportX = (element.x + scrollX) * zoom + canvasOffsetX;
+      const viewportY = (element.y + scrollY) * zoom + canvasOffsetY;
       const width = element.width * zoom;
       const height = element.height * zoom;
 
-      item.el.style.transform = `translate(${x}px, ${y}px)`;
+      item.el.style.transform = `translate(${viewportX}px, ${viewportY}px)`;
       item.el.style.width = `${width}px`;
       item.el.style.height = `${height}px`;
+      
+      // Show element once positioned
+      if (item.el.style.visibility === "hidden") {
+        item.el.style.visibility = "visible";
+      }
+    });
+  }
+
+  syncWithElements(elements: readonly ExcalidrawElement[]) {
+    // Build a set of current overlay IDs from elements
+    const currentOverlayIds = new Set<string>();
+    elements.forEach((element) => {
+      const overlayId = (element as any).customData?.overlayId as string | undefined;
+      if (overlayId && !(element as any).isDeleted) {
+        currentOverlayIds.add(overlayId);
+      }
+    });
+
+    // Remove overlays that no longer exist in elements
+    const toRemove: string[] = [];
+    this.items.forEach((item, id) => {
+      if (!currentOverlayIds.has(id)) {
+        toRemove.push(id);
+      }
+    });
+
+    toRemove.forEach((id) => {
+      const item = this.items.get(id);
+      if (item) {
+        item.el.remove();
+        this.items.delete(id);
+      }
+    });
+  }
+
+  updateSelectionState(selectedElementIds: Record<string, boolean> | undefined) {
+    this.items.forEach((item) => {
+      const isSelected = selectedElementIds?.[item.id] ?? false;
+      if (isSelected) {
+        item.el.classList.add("overlay-selected");
+        // Selected: Disable pointer events so Excalidraw can handle drag/resize/delete
+        item.el.style.pointerEvents = "none";
+      } else {
+        item.el.classList.remove("overlay-selected");
+        // Unselected: Enable pointer events so user can interact with content (e.g. play video)
+        // User must use marquee selection (drag from outside) to select the element
+        item.el.style.pointerEvents = "auto";
+      }
     });
   }
 
