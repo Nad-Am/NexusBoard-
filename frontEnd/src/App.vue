@@ -28,6 +28,8 @@
     <ExcalidrawWrapper
       :permissions="{ canEdit }"
       :actions="toolbarActions"
+      :files="canvasStore.files"
+      :collaborators="collaborators"
       @ready="onReady"
       @change="onChange"
       @pointer="onPointer"
@@ -42,7 +44,7 @@ import ExcalidrawWrapper from "@/components/ExcalidrawWrapper.vue";
 import eventBus from "@/utils/eventBus";
 import { createId } from "@/utils/id";
 import type { ActionItem } from "@/react/ExcalidrawHost";
-import type { AppState, BinaryFiles } from "@excalidraw/excalidraw/types";
+import type { AppState, BinaryFiles, Collaborator, SocketId } from "@excalidraw/excalidraw/types";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import { useCanvasStore } from "@/stores/canvasStore";
 import {
@@ -52,6 +54,7 @@ import {
   saveSnapshot,
   type Snapshot,
 } from "@/services/canvasApi";
+import google from "@/assets/google.png";
 
 const canEdit = ref(true);
 const canvasStore = useCanvasStore();
@@ -72,12 +75,7 @@ const wsJoined = ref(false);
 const wsUserId = ref<string | null>(null);
 const wsUserColor = ref<string | null>(null);
 const activeUsers = ref<Array<{ userId: string; color: string }>>([]);
-const collaborators = ref(new Map<string, {
-  pointer?: unknown;
-  color: string;
-  button?: number;
-  username?: string;
-}>());
+const collaborators = ref(new Map<SocketId, Collaborator>());
 
 const normalizeAppState = (appState?: Partial<AppState> | null) => {
   const base = (appState ?? {}) as Partial<AppState> & {
@@ -140,7 +138,7 @@ const setCollaborators = () => {
   });
 };
 
-const removeCollaborator = (userId: string) => {
+const removeCollaborator = (userId: SocketId) => {
   if (!collaborators.value.has(userId)) return;
   collaborators.value.delete(userId);
   setCollaborators();
@@ -198,7 +196,7 @@ const connectWebSocket = (targetCanvasId: string) => {
       }
       if (message.type === "user_left" && message.userId) {
         activeUsers.value = activeUsers.value.filter((user) => user.userId !== message.userId);
-        removeCollaborator(message.userId);
+        removeCollaborator(message.userId as SocketId);
         return;
       }
       if (message.type === "cursor" && message.userId && message.color) {
@@ -207,13 +205,16 @@ const connectWebSocket = (targetCanvasId: string) => {
         const pointer = rawPayload && typeof rawPayload === "object"
           ? (rawPayload as { pointer?: unknown }).pointer ?? rawPayload
           : rawPayload;
-        collaborators.value.set(message.userId, {
-          pointer,
+        collaborators.value.set(message.userId as SocketId, {
+          pointer: pointer as any,
           button: rawPayload && typeof rawPayload === "object"
-            ? (rawPayload as { button?: number }).button
-            : undefined,
+            ? (rawPayload as { button?: "up" | "down" }).button
+            : "up",
           username: message.userId,
-          color: message.color,
+          color: {
+            background: message.color,
+            stroke: message.color,
+          },
         });
         setCollaborators();
         return;
@@ -369,7 +370,7 @@ const addVideo = () => {
   eventBus.emit("addExtraResource", {
     id: createId("overlay"),
     type: "video",
-    url: "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
+    url: google,
     x: 140,
     y: -100,
     width: 320,
@@ -380,12 +381,12 @@ const addVideo = () => {
 const addApp = () => {
   eventBus.emit("addExtraResource", {
     id: createId("overlay"),
-    type: "app",
-    url: "https://example.com",
+    type: "custom",
+    content: "DomTest Component",
     x: -140,
     y: 140,
-    width: 360,
-    height: 240,
+    width: 200,
+    height: 200,
   });
 };
 

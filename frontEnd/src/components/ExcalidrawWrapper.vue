@@ -23,6 +23,7 @@ import { createId } from "@/utils/id";
 import type { ExtraResource, WorkspacePermissions } from "@/utils/types";
 import ExcalidrawHost, { type ActionItem } from "@/react/ExcalidrawHost";
 import { useDomListener } from "@/utils/domListener";
+import DomTest from "@/components/DomTest.vue";
 
 const props = withDefaults(
   defineProps<{
@@ -83,10 +84,10 @@ const handleChange = (elements: readonly ExcalidrawElement[], appState: AppState
   if (excalidrawContainer.value && overlayManager.value) {
     // Sync overlay DOM with elements (handle deletions)
     overlayManager.value.syncWithElements(elements);
-    // Update overlay positions
+    // Update selection highlighting (Mount/Unmount)
+    overlayManager.value.updateSelectionState(appState.selectedElementIds, elements);
+    // Update overlay positions (now includes newly mounted ones)
     overlayManager.value.updatePositions(elements, appState, excalidrawContainer.value);
-    // Update selection highlighting
-    overlayManager.value.updateSelectionState(appState.selectedElementIds);
   }
 
   if (isFirstLoad.value) isFirstLoad.value = false;
@@ -228,7 +229,35 @@ onMounted(() => {
   if (!excalidrawContainer.value) return;
   if (!overlayRoot.value) return;
 
-  overlayManager.value = new OverlayManager(overlayRoot.value);
+  const handleOverlaySnapshot = (id: string, dataURL: string) => {
+    if (!excalidrawAPI.value) return;
+    const elements = excalidrawAPI.value.getSceneElements();
+    const element = elements.find((e) => e.id === id);
+    if (!element || !(element as any).fileId) return;
+
+    const fileId = (element as any).fileId;
+
+    excalidrawAPI.value.addFiles({
+      [fileId]: {
+        id: fileId,
+        dataURL,
+        mimeType: "image/png",
+        created: Date.now(),
+      },
+    } as any);
+
+    // Force update to re-render the element with new image
+    excalidrawAPI.value.updateScene({ 
+      elements: excalidrawAPI.value.getSceneElements(),
+      captureUpdate: "NEVER"
+    });
+  };
+
+  overlayManager.value = new OverlayManager(
+    overlayRoot.value, 
+    { custom: DomTest },
+    handleOverlaySnapshot
+  );
   overlayManager.value.setReadOnly(!permissions.value.canEdit);
 
   reactRoot.value = createRoot(excalidrawContainer.value);
@@ -307,7 +336,7 @@ watch(
   (appState) => {
     if (!excalidrawAPI.value) return;
     excalidrawAPI.value.updateScene({
-      appState,
+      appState: appState as any,
       captureUpdate: "NEVER",
     });
   },

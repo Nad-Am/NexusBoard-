@@ -4,7 +4,7 @@
 
 export type ExtraResource = {
   id: string;
-  type: "image" | "markdown" | "video" | "app";
+  type: "image" | "markdown" | "video" | "app" | "custom";
   x?: number;
   y?: number;
   width?: number;
