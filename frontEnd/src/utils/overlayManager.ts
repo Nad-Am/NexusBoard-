@@ -1,7 +1,7 @@
 ﻿import type { AppState } from "@excalidraw/excalidraw/types";
 import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { ExtraResource } from "./types";
-import { type App, type Component, createApp } from "vue";
+import { type App, type Component, createApp, nextTick } from "vue";
 import html2canvas from "html2canvas";
 import { createId } from "./id";
 
@@ -14,6 +14,7 @@ type OverlayItem = {
   type: ExtraResource["type"];
   el: HTMLElement;
   vueApp?: App; // Store Vue app instance for cleanup
+  interactive?: boolean;
 };
 
 const createPlaceholderElement = (resource: ExtraResource): ExcalidrawElement => {
@@ -90,6 +91,7 @@ export default class OverlayManager {
   private componentRegistry: Record<string, Component> = {};
   private onSnapshot?: SnapshotHandler;
   private currentZoom = 1;
+  private readOnly = false;
 
   constructor(root: HTMLElement, componentRegistry: Record<string, Component> = {}, onSnapshot?: SnapshotHandler) {
     this.root = root;
@@ -113,7 +115,7 @@ export default class OverlayManager {
         // Activate interaction!
         e.stopPropagation(); // Stop Excalidraw from seeing this double-click (prevent text edit)
         e.preventDefault();
-        this.setInteraction(id, true);
+        this.toggleInteraction(id);
         return;
       }
     }
@@ -123,10 +125,18 @@ export default class OverlayManager {
     const item = this.activeOverlays.get(id);
     if (!item) return;
 
-    item.el.style.pointerEvents = interactive ? "auto" : "none";
-    item.el.style.borderColor = interactive ? "#10b981" : ""; // Green when interactive
+    const canInteract = interactive && !this.readOnly;
+    item.interactive = canInteract;
+    item.el.style.pointerEvents = canInteract ? "auto" : "none";
+    item.el.style.borderColor = canInteract ? "#10b981" : ""; // Green when interactive
+    item.el.classList.toggle("overlay-selected", canInteract);
   }
 
+  private toggleInteraction(id: string) {
+    const item = this.activeOverlays.get(id);
+    if (!item) return;
+    this.setInteraction(id, !item.interactive);
+  }
   // Helper to create element configuration, but DOES NOT mount DOM
   batchCreateOverlays(resources: ExtraResource[]) {
     const elements: ExcalidrawElement[] = [];
@@ -177,20 +187,18 @@ export default class OverlayManager {
 
       const viewportX = (element.x + scrollX) * zoom + canvasOffsetX;
       const viewportY = (element.y + scrollY) * zoom + canvasOffsetY;
-      const width = element.width * zoom;
-      const height = element.height * zoom;
 
-      item.el.style.transform = `translate(${viewportX}px, ${viewportY}px)`;
-      item.el.style.width = `${width}px`;
-      item.el.style.height = `${height}px`;
+      item.el.style.transform = `translate(${viewportX}px, ${viewportY}px) scale(${zoom})`;
+      item.el.style.width = `${element.width}px`;
+      item.el.style.height = `${element.height}px`;
     });
   }
 
   // The core logic: Mount DOM if selected, Unmount if deselected
   updateSelectionState(selectedElementIds: Record<string, boolean> | undefined, elements: readonly ExcalidrawElement[]) {
-    if (!selectedElementIds) return;
-
-    const selectedIds = Object.keys(selectedElementIds).filter((id) => selectedElementIds[id]);
+    const selectedIds = selectedElementIds
+      ? Object.keys(selectedElementIds).filter((id) => selectedElementIds[id])
+      : [];
 
     // 1. Mount Overlays for newly selected supported elements
     selectedIds.forEach((id) => {
@@ -234,6 +242,13 @@ export default class OverlayManager {
     if (this.pendingRemovals.has(element.id)) {
       const item = this.pendingRemovals.get(element.id)!;
       this.pendingRemovals.delete(element.id);
+      // 重置淡出效果
+      item.el.style.transition = "";
+      item.el.style.opacity = "1";
+      item.el.style.visibility = "visible";
+      item.interactive = false;
+      item.el.style.pointerEvents = "none";
+      item.el.classList.remove("overlay-selected");
       this.activeOverlays.set(element.id, item);
       return;
     }
@@ -271,51 +286,61 @@ export default class OverlayManager {
     el.style.pointerEvents = "none"; 
     
     this.root.appendChild(el);
-    this.activeOverlays.set(element.id, { id: element.id, type: resource.type, el, vueApp });
+    this.activeOverlays.set(element.id, { id: element.id, type: resource.type, el, vueApp, interactive: false });
   }
 
   private async removeOverlay(id: string) {
     const item = this.activeOverlays.get(id);
     if (!item) return;
 
-    // Move to pending removals
+    // Move to pending removals (but keep visible for snapshot)
     this.activeOverlays.delete(id);
     this.pendingRemovals.set(id, item);
+    item.interactive = false;
+    item.el.style.pointerEvents = "none";
+    item.el.classList.remove("overlay-selected");
 
-    // Capture snapshot asynchronously
+    // Wait for Vue updates and ensure browser repaint/reflow
+    await nextTick();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Capture snapshot BEFORE hiding
     if (this.onSnapshot) {
       try {
-            // Calculate logical (unzoomed) size
-            const rect = item.el.getBoundingClientRect();
-            // We use the simpler logic: computed style width / zoom
-            // (bounding rect might be affected by transform, style width is explicit in px)
-            const styleWidth = parseFloat(item.el.style.width);
-            const styleHeight = parseFloat(item.el.style.height);
-            
-            const logicalWidth = styleWidth / (this.currentZoom || 1);
-            const logicalHeight = styleHeight / (this.currentZoom || 1);
+        // 使用 Excalidraw 元素的精确尺寸（从 style 获取）
+        const captureWidth = Math.round(parseFloat(item.el.style.width) || item.el.offsetWidth || 320);
+        const captureHeight = Math.round(parseFloat(item.el.style.height) || item.el.offsetHeight || 240);
+        
+        // 保存原始 transform（包含 translate 和 scale）
+        const originalTransform = item.el.style.transform;
+        
+        // 临时移除 scale，只保留位置（或直接重置为简单状态）
+        // 截图时不需要位置偏移，只需要内容
+        item.el.style.transform = "none";
+        
+        console.log("[Snapshot] Capture size:", captureWidth, captureHeight);
 
-            const canvas = await html2canvas(item.el, { 
-              logging: false, 
-              useCORS: true, 
-              backgroundColor: null,
-              scale: window.devicePixelRatio, // High DPI capture at 1x logical size
-              onclone: (clonedDoc, element) => {
-                 // Resize the CLONED element to its logical size to prevent text reflow matching zoom
-                 element.style.width = `${logicalWidth}px`;
-                 element.style.height = `${logicalHeight}px`;
-                 // Remove transform to ensure it renders flat/cleanly ?? 
-                 // Actually html2canvas might strip transforms on the root element being captured?
-                 // Let's reset transform just in case the container had one
-                 element.style.transform = "none";
-              }
-            });
-            const dataURL = canvas.toDataURL("image/png");
-            
-            // Only update if still pending removal (otherwise we resurrected)
-            if (this.pendingRemovals.has(id)) {
-                 this.onSnapshot(id, dataURL);
-            }
+        // 截图，scale: 1 保持 1:1 像素比例
+        const canvas = await html2canvas(item.el, { 
+          logging: false, 
+          useCORS: true, 
+          backgroundColor: null,
+          scale: 1,
+          width: captureWidth,
+          height: captureHeight,
+        });
+        
+        // 恢复原始 transform
+        item.el.style.transform = originalTransform;
+        
+        const dataURL = canvas.toDataURL("image/png");
+        
+        // Only update if still pending removal (otherwise we resurrected)
+        if (this.pendingRemovals.has(id)) {
+          this.onSnapshot(id, dataURL);
+          // 等待 Excalidraw 加载新图片后再隐藏 overlay
+          await new Promise((resolve) => setTimeout(resolve, 150));
+        }
       } catch (e) {
         console.error("Snapshot failed:", e);
       }
@@ -323,8 +348,15 @@ export default class OverlayManager {
 
     // Check if still pending (might have been resurrected)
     if (!this.pendingRemovals.has(id)) {
-        return;
+      return;
     }
+
+    // 使用淡出效果避免闪烁
+    item.el.style.transition = "opacity 200ms ease-out";
+    item.el.style.opacity = "0";
+    
+    // 等待淡出完成后再清理
+    await new Promise((resolve) => setTimeout(resolve, 250));
 
     if (item.vueApp) {
       item.vueApp.unmount();
@@ -346,8 +378,10 @@ export default class OverlayManager {
      // In this hybrid mode, readonly might mean strictly no interaction,
      // or just "cannot move". 
      // For now, if readonly, we might want to disable pointer events on active overlays
+     this.readOnly = readonly;
      this.activeOverlays.forEach(item => {
-         item.el.style.pointerEvents = readonly ? "none" : "auto";
+         item.interactive = readonly ? false : item.interactive;
+         item.el.style.pointerEvents = readonly ? "none" : (item.interactive ? "auto" : "none");
      });
   }
 

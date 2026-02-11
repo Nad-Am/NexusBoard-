@@ -2,6 +2,15 @@
   <div class="excalidraw-wrapper" :class="{ readonly: !permissions.canEdit }">
     <div ref="excalidrawContainer" class="excalidraw-container"></div>
     <div ref="overlayRoot" class="excalidraw-overlay-root"></div>
+    
+    <!-- 截图测试预览 -->
+    <div v-if="testSnapshotUrl" class="snapshot-preview">
+      <div class="snapshot-header">
+        <span>Snapshot Preview (Test)</span>
+        <button @click="testSnapshotUrl = null">✕</button>
+      </div>
+      <img :src="testSnapshotUrl" alt="Snapshot Preview" />
+    </div>
   </div>
 </template>
 
@@ -57,15 +66,73 @@ let snapshotTimer: number | null = null;
 let stopDomListener: (() => void) | null = null;
 let resourceHandler: ((resource: ExtraResource) => void) | null = null;
 let rafId: number | null = null;
+let lastSelectedKey = "";
+const testSnapshotUrl = ref<string | null>(null);
+
+const isOverlayElement = (element: ExcalidrawElement) => {
+  const customData = (element as any).customData;
+  return Boolean(customData?.overlayId && customData?.overlayType);
+};
+
+const getSelectedKey = (selectedElementIds?: Record<string, boolean>) => {
+  if (!selectedElementIds) return "";
+  return Object.keys(selectedElementIds)
+    .filter((id) => selectedElementIds[id])
+    .sort()
+    .join(",");
+};
+
+const normalizeOverlayElementsForSync = (elements: readonly ExcalidrawElement[]) => {
+  let changed = false;
+  const nextElements = elements.map((element) => {
+    if (!isOverlayElement(element)) return element;
+    if (element.opacity === 100) return element;
+    changed = true;
+    return { ...element, opacity: 100 };
+  });
+  return changed ? nextElements : elements;
+};
+
+const applyOverlayVisibility = (
+  elements: readonly ExcalidrawElement[],
+  selectedElementIds: Record<string, boolean> | undefined,
+) => {
+  if (!excalidrawAPI.value) return;
+  const selectedIds = selectedElementIds
+    ? Object.keys(selectedElementIds).filter((id) => selectedElementIds[id])
+    : [];
+  const selectedSet = new Set(selectedIds);
+  let changed = false;
+
+  const nextElements = elements.map((element) => {
+    if (!isOverlayElement(element)) return element;
+    const nextOpacity = selectedSet.has(element.id) ? 0 : 100;
+    if (element.opacity === nextOpacity) return element;
+    changed = true;
+    return { ...element, opacity: nextOpacity };
+  });
+
+  if (changed) {
+    excalidrawAPI.value.updateScene({ elements: nextElements, captureUpdate: "NEVER" });
+  }
+};
 
 const handlePointerUpdate = (payload: unknown) => {
   if (rafId !== null) return;
   rafId = requestAnimationFrame(() => {
     rafId = null;
     if (!excalidrawAPI.value || !overlayManager.value || !excalidrawContainer.value) return;
+    const appState = excalidrawAPI.value.getAppState();
+    const selectedKey = getSelectedKey(appState.selectedElementIds);
+    if (selectedKey !== lastSelectedKey) {
+      lastSelectedKey = selectedKey;
+      const elements = excalidrawAPI.value.getSceneElements();
+      overlayManager.value.updateSelectionState(appState.selectedElementIds, elements);
+      applyOverlayVisibility(elements, appState.selectedElementIds);
+    }
     overlayManager.value.updatePositions(
       excalidrawAPI.value.getSceneElements(),
-      excalidrawAPI.value.getAppState(),
+      appState,
       excalidrawContainer.value,
     );
   });
@@ -73,11 +140,15 @@ const handlePointerUpdate = (payload: unknown) => {
 };
 
 const handleChange = (elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
+  lastSelectedKey = getSelectedKey(appState.selectedElementIds);
   const validFiles = Object.fromEntries(
     Object.entries(files).filter(([, file]) => Boolean(file)),
   ) as BinaryFiles;
 
-  canvasStore.setElements(elements);
+  applyOverlayVisibility(elements, appState.selectedElementIds);
+  const elementsForSync = normalizeOverlayElementsForSync(elements);
+
+  canvasStore.setElements(elementsForSync);
   canvasStore.setAppState(appState);
   canvasStore.setFiles(validFiles);
 
@@ -91,7 +162,7 @@ const handleChange = (elements: readonly ExcalidrawElement[], appState: AppState
   }
 
   if (isFirstLoad.value) isFirstLoad.value = false;
-  emit("change", elements, appState, validFiles);
+  emit("change", elementsForSync, appState, validFiles);
 };
 
 const handleReady = (api: ExcalidrawImperativeAPI) => {
@@ -230,26 +301,58 @@ onMounted(() => {
   if (!overlayRoot.value) return;
 
   const handleOverlaySnapshot = (id: string, dataURL: string) => {
+    // 测试模式：直接显示截图预览，不写入数据库
+    console.log("[Snapshot Test] Captured overlay:", id);
+    testSnapshotUrl.value = dataURL;
+
     if (!excalidrawAPI.value) return;
     const elements = excalidrawAPI.value.getSceneElements();
     const element = elements.find((e) => e.id === id);
-    if (!element || !(element as any).fileId) return;
+    if (!element) {
+      console.log("[Snapshot] Element not found:", id);
+      return;
+    }
 
-    const fileId = (element as any).fileId;
+    if (element.type !== "image") {
+      console.log("[Snapshot] Not an image element, skipping");
+      return;
+    }
 
+    // 每次都创建新的 fileId，避免 Excalidraw 缓存问题
+    const newFileId = createId("file");
+    console.log("[Snapshot] Creating new fileId:", newFileId);
+
+    // 先添加文件
     excalidrawAPI.value.addFiles({
-      [fileId]: {
-        id: fileId,
+      [newFileId]: {
+        id: newFileId,
         dataURL,
         mimeType: "image/png",
         created: Date.now(),
       },
     } as any);
 
-    // Force update to re-render the element with new image
-    excalidrawAPI.value.updateScene({ 
-      elements: excalidrawAPI.value.getSceneElements(),
-      captureUpdate: "NEVER"
+    // 延迟更新元素以确保文件已添加
+    requestAnimationFrame(() => {
+      if (!excalidrawAPI.value) return;
+      
+      const currentElements = excalidrawAPI.value.getSceneElements();
+      const nextElements = currentElements.map((el) => {
+        if (el.id === id) {
+          return {
+            ...el,
+            fileId: newFileId,
+            version: ((el as any).version || 1) + 1,
+            versionNonce: Math.floor(Math.random() * 2 ** 31),
+          };
+        }
+        return el;
+      });
+      
+      excalidrawAPI.value.updateScene({ 
+        elements: nextElements,
+      });
+      console.log("[Snapshot] Applied to element:", id, "fileId:", newFileId);
     });
   };
 
@@ -292,6 +395,7 @@ watch(
       excalidrawAPI.value.updateScene(
         { elements: newElements, captureUpdate: "NEVER" },
       );
+      applyOverlayVisibility(newElements, excalidrawAPI.value.getAppState().selectedElementIds);
       isFirstLoad.value = false;
 
       // Update overlay positions after first load
@@ -309,6 +413,7 @@ watch(
     excalidrawAPI.value.updateScene(
       { elements: merged, captureUpdate: "NEVER" },
     );
+    applyOverlayVisibility(merged, excalidrawAPI.value.getAppState().selectedElementIds);
 
     // Update overlay positions after merge
     if (overlayManager.value && excalidrawContainer.value) {
@@ -434,6 +539,48 @@ onUnmounted(() => {
 .excalidraw-overlay-root .overlay-selected {
   border: 2px solid #6366f1 !important;
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3), 0 4px 12px rgba(99, 102, 241, 0.25);
+}
+
+/* 截图测试预览 */
+.snapshot-preview {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 1000;
+  background: rgba(20, 20, 24, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  padding: 12px;
+  max-width: 400px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.snapshot-preview .snapshot-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  color: #a1a1aa;
+  font-size: 12px;
+}
+
+.snapshot-preview .snapshot-header button {
+  background: transparent;
+  border: none;
+  color: #a1a1aa;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px 8px;
+}
+
+.snapshot-preview .snapshot-header button:hover {
+  color: #fff;
+}
+
+.snapshot-preview img {
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 </style>

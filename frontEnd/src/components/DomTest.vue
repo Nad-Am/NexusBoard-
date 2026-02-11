@@ -11,6 +11,7 @@ import { ref } from "vue";
 const count = ref(0);
 const handleClick = () => {
     count.value++;
+    console.log("[DomTest] Clicked. New count:", count.value);
 };
 </script>
 <style scoped>
