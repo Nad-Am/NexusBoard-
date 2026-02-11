@@ -242,7 +242,7 @@ export default class OverlayManager {
     if (this.pendingRemovals.has(element.id)) {
       const item = this.pendingRemovals.get(element.id)!;
       this.pendingRemovals.delete(element.id);
-      // 重置淡出效果
+      // 重置淡出效果，恢复可见状态
       item.el.style.transition = "";
       item.el.style.opacity = "1";
       item.el.style.visibility = "visible";
@@ -304,24 +304,27 @@ export default class OverlayManager {
     await nextTick();
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // Capture snapshot BEFORE hiding
+    // Capture snapshot BEFORE hiding using a CLONE to avoid flicker
     if (this.onSnapshot) {
       try {
         // 使用 Excalidraw 元素的精确尺寸（从 style 获取）
         const captureWidth = Math.round(parseFloat(item.el.style.width) || item.el.offsetWidth || 320);
         const captureHeight = Math.round(parseFloat(item.el.style.height) || item.el.offsetHeight || 240);
         
-        // 保存原始 transform（包含 translate 和 scale）
-        const originalTransform = item.el.style.transform;
-        
-        // 临时移除 scale，只保留位置（或直接重置为简单状态）
-        // 截图时不需要位置偏移，只需要内容
-        item.el.style.transform = "none";
-        
-        console.log("[Snapshot] Capture size:", captureWidth, captureHeight);
+        // 克隆元素用于截图，避免修改原始元素导致闪烁
+        const clone = item.el.cloneNode(true) as HTMLElement;
+        clone.style.position = "fixed";
+        clone.style.left = "-9999px";
+        clone.style.top = "-9999px";
+        clone.style.transform = "none";
+        clone.style.visibility = "visible";
+        clone.style.opacity = "1";
+        clone.style.width = `${captureWidth}px`;
+        clone.style.height = `${captureHeight}px`;
+        document.body.appendChild(clone);
 
         // 截图，scale: 1 保持 1:1 像素比例
-        const canvas = await html2canvas(item.el, { 
+        const canvas = await html2canvas(clone, { 
           logging: false, 
           useCORS: true, 
           backgroundColor: null,
@@ -330,8 +333,8 @@ export default class OverlayManager {
           height: captureHeight,
         });
         
-        // 恢复原始 transform
-        item.el.style.transform = originalTransform;
+        // 移除克隆元素
+        clone.remove();
         
         const dataURL = canvas.toDataURL("image/png");
         

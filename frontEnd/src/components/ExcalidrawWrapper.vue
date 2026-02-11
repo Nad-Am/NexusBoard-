@@ -2,15 +2,6 @@
   <div class="excalidraw-wrapper" :class="{ readonly: !permissions.canEdit }">
     <div ref="excalidrawContainer" class="excalidraw-container"></div>
     <div ref="overlayRoot" class="excalidraw-overlay-root"></div>
-    
-    <!-- 截图测试预览 -->
-    <div v-if="testSnapshotUrl" class="snapshot-preview">
-      <div class="snapshot-header">
-        <span>Snapshot Preview (Test)</span>
-        <button @click="testSnapshotUrl = null">✕</button>
-      </div>
-      <img :src="testSnapshotUrl" alt="Snapshot Preview" />
-    </div>
   </div>
 </template>
 
@@ -67,7 +58,6 @@ let stopDomListener: (() => void) | null = null;
 let resourceHandler: ((resource: ExtraResource) => void) | null = null;
 let rafId: number | null = null;
 let lastSelectedKey = "";
-const testSnapshotUrl = ref<string | null>(null);
 
 const isOverlayElement = (element: ExcalidrawElement) => {
   const customData = (element as any).customData;
@@ -301,26 +291,13 @@ onMounted(() => {
   if (!overlayRoot.value) return;
 
   const handleOverlaySnapshot = (id: string, dataURL: string) => {
-    // 测试模式：直接显示截图预览，不写入数据库
-    console.log("[Snapshot Test] Captured overlay:", id);
-    testSnapshotUrl.value = dataURL;
-
     if (!excalidrawAPI.value) return;
     const elements = excalidrawAPI.value.getSceneElements();
     const element = elements.find((e) => e.id === id);
-    if (!element) {
-      console.log("[Snapshot] Element not found:", id);
-      return;
-    }
+    if (!element) return;
+    if (element.type !== "image") return;
 
-    if (element.type !== "image") {
-      console.log("[Snapshot] Not an image element, skipping");
-      return;
-    }
-
-    // 每次都创建新的 fileId，避免 Excalidraw 缓存问题
     const newFileId = createId("file");
-    console.log("[Snapshot] Creating new fileId:", newFileId);
 
     // 先添加文件
     excalidrawAPI.value.addFiles({
@@ -350,9 +327,8 @@ onMounted(() => {
       });
       
       excalidrawAPI.value.updateScene({ 
-        elements: nextElements,
+        elements: nextElements as any,
       });
-      console.log("[Snapshot] Applied to element:", id, "fileId:", newFileId);
     });
   };
 
@@ -540,47 +516,4 @@ onUnmounted(() => {
   border: 2px solid #6366f1 !important;
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3), 0 4px 12px rgba(99, 102, 241, 0.25);
 }
-
-/* 截图测试预览 */
-.snapshot-preview {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  z-index: 1000;
-  background: rgba(20, 20, 24, 0.95);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 12px;
-  padding: 12px;
-  max-width: 400px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-}
-
-.snapshot-preview .snapshot-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-  color: #a1a1aa;
-  font-size: 12px;
-}
-
-.snapshot-preview .snapshot-header button {
-  background: transparent;
-  border: none;
-  color: #a1a1aa;
-  cursor: pointer;
-  font-size: 16px;
-  padding: 4px 8px;
-}
-
-.snapshot-preview .snapshot-header button:hover {
-  color: #fff;
-}
-
-.snapshot-preview img {
-  max-width: 100%;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
 </style>
