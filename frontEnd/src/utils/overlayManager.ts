@@ -84,19 +84,28 @@ const createOverlayNode = (resource: ExtraResource) => {
   return el;
 };
 
+type ResurrectHandler = (id: string) => void;
+
 export default class OverlayManager {
   private root: HTMLElement;
   private activeOverlays = new Map<string, OverlayItem>();
   private pendingRemovals = new Map<string, OverlayItem>();
   private componentRegistry: Record<string, Component> = {};
   private onSnapshot?: SnapshotHandler;
+  private onResurrect?: ResurrectHandler;
   private currentZoom = 1;
   private readOnly = false;
 
-  constructor(root: HTMLElement, componentRegistry: Record<string, Component> = {}, onSnapshot?: SnapshotHandler) {
+  constructor(
+    root: HTMLElement, 
+    componentRegistry: Record<string, Component> = {}, 
+    onSnapshot?: SnapshotHandler,
+    onResurrect?: ResurrectHandler
+  ) {
     this.root = root;
     this.componentRegistry = componentRegistry;
     this.onSnapshot = onSnapshot;
+    this.onResurrect = onResurrect;
     this.setupEventListeners();
   }
 
@@ -250,6 +259,10 @@ export default class OverlayManager {
       item.el.style.pointerEvents = "none";
       item.el.classList.remove("overlay-selected");
       this.activeOverlays.set(element.id, item);
+      // 触发 resurrect 回调，通知外部恢复占位图隐藏状态
+      if (this.onResurrect) {
+        this.onResurrect(element.id);
+      }
       return;
     }
 
@@ -386,6 +399,10 @@ export default class OverlayManager {
          item.interactive = readonly ? false : item.interactive;
          item.el.style.pointerEvents = readonly ? "none" : (item.interactive ? "auto" : "none");
      });
+  }
+
+  isPendingRemoval(id: string) {
+    return this.pendingRemovals.has(id);
   }
 
   destroy() {

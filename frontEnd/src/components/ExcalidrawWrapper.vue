@@ -96,6 +96,14 @@ const applyOverlayVisibility = (
 
   const nextElements = elements.map((element) => {
     if (!isOverlayElement(element)) return element;
+    // 如果正在等待截图，保持隐藏状态直到截图完成
+    if (overlayManager.value?.isPendingRemoval(element.id)) {
+      if (element.opacity !== 0) {
+        changed = true;
+        return { ...element, opacity: 0 };
+      }
+      return element;
+    }
     const nextOpacity = selectedSet.has(element.id) ? 0 : 100;
     if (element.opacity === nextOpacity) return element;
     changed = true;
@@ -319,6 +327,7 @@ onMounted(() => {
           return {
             ...el,
             fileId: newFileId,
+            opacity: 100, // 截图完成，显示占位图
             version: ((el as any).version || 1) + 1,
             versionNonce: Math.floor(Math.random() * 2 ** 31),
           };
@@ -332,10 +341,21 @@ onMounted(() => {
     });
   };
 
+  const handleOverlayResurrect = (id: string) => {
+    // Resurrect 发生时，overlay DOM 重新可见，占位图应保持隐藏
+    // applyOverlayVisibility 会自动处理（因为元素被选中）
+    // 但需要触发一次更新确保状态正确
+    if (!excalidrawAPI.value) return;
+    const elements = excalidrawAPI.value.getSceneElements();
+    const appState = excalidrawAPI.value.getAppState();
+    applyOverlayVisibility(elements, appState.selectedElementIds);
+  };
+
   overlayManager.value = new OverlayManager(
     overlayRoot.value, 
     { custom: DomTest },
-    handleOverlaySnapshot
+    handleOverlaySnapshot,
+    handleOverlayResurrect
   );
   overlayManager.value.setReadOnly(!permissions.value.canEdit);
 
